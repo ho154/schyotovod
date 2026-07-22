@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"schyotovod/internal/trace"
 	"strings"
 	"time"
 )
@@ -83,17 +84,21 @@ func (c *Client) Authorize(ctx context.Context) error {
 	req.Header.Set("Content-Type", "application/json")
 
 	c.debugRequest(req)
+	started := time.Now()
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.recordStep(ctx, http.MethodPost, c.authURL, string(raw), 0, "", started, err)
 		return err
 	}
 	defer resp.Body.Close()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
+		c.recordStep(ctx, http.MethodPost, c.authURL, string(raw), resp.StatusCode, "", started, err)
 		return err
 	}
 	c.debugResponse(resp.StatusCode, data)
+	c.recordStep(ctx, http.MethodPost, c.authURL, string(raw), resp.StatusCode, string(data), started, nil)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("авторизация Pyrus отклонена: %s", describeError(resp.StatusCode, data))
@@ -132,18 +137,23 @@ func (c *Client) doWithReauth(ctx context.Context, buildReq func() (*http.Reques
 	}
 	req.Header.Set("Authorization", "Bearer "+c.accessToken)
 
+	reqBody := string(readRequestBodyForDebug(req))
 	c.debugRequest(req)
+	started := time.Now()
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.recordStep(ctx, req.Method, req.URL.String(), reqBody, 0, "", started, err)
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
+		c.recordStep(ctx, req.Method, req.URL.String(), reqBody, resp.StatusCode, "", started, err)
 		return nil, nil, err
 	}
 	c.debugResponse(resp.StatusCode, data)
+	c.recordStep(ctx, req.Method, req.URL.String(), reqBody, resp.StatusCode, string(data), started, nil)
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		// Токен протух (например, отозван на сервере) — пробуем авторизоваться заново и повторить.
@@ -157,20 +167,47 @@ func (c *Client) doWithReauth(ctx context.Context, buildReq func() (*http.Reques
 		req2.Header.Set("Authorization", "Bearer "+c.accessToken)
 		req2.Header.Set("Content-Type", req.Header.Get("Content-Type"))
 
+		reqBody2 := string(readRequestBodyForDebug(req2))
 		c.debugRequest(req2)
+		started2 := time.Now()
 		resp2, err := c.http.Do(req2)
 		if err != nil {
+			c.recordStep(ctx, req2.Method, req2.URL.String(), reqBody2, 0, "", started2, err)
 			return nil, nil, err
 		}
 		defer resp2.Body.Close()
 		data2, err := io.ReadAll(resp2.Body)
 		if err != nil {
+			c.recordStep(ctx, req2.Method, req2.URL.String(), reqBody2, resp2.StatusCode, "", started2, err)
 			return nil, nil, err
 		}
 		c.debugResponse(resp2.StatusCode, data2)
+		c.recordStep(ctx, req2.Method, req2.URL.String(), reqBody2, resp2.StatusCode, string(data2), started2, nil)
 		return resp2, data2, nil
 	}
 	return resp, data, nil
+}
+
+// recordStep фиксирует один HTTP-шаг обращения к Pyrus в trace.Collector из
+// контекста (если он есть). Тела маскируются внутри trace.Collector.Record.
+func (c *Client) recordStep(ctx context.Context, method, endpoint, reqBody string, status int, respBody string, started time.Time, callErr error) {
+	col := trace.FromContext(ctx)
+	if col == nil {
+		return
+	}
+	step := trace.Step{
+		Kind:         trace.KindPyrus,
+		Method:       method,
+		Endpoint:     endpoint,
+		RequestBody:  reqBody,
+		StatusCode:   status,
+		ResponseBody: respBody,
+		DurationMs:   time.Since(started).Milliseconds(),
+	}
+	if callErr != nil {
+		step.Error = callErr.Error()
+	}
+	col.Record(step)
 }
 
 // readRequestBodyForDebug безопасно извлекает тело запроса для логирования,
@@ -603,7 +640,10 @@ func (c *Client) debugRequest(req *http.Request) {
 		return
 	}
 	body := readRequestBodyForDebug(req)
-	c.log.Debug("--> %s %s\nHeaders: %v\nBody: %s", req.Method, req.URL.String(), req.Header, string(body))
+	// Маскируем секреты (security_key, Authorization) перед записью в лог.
+	safeBody := trace.Sanitize(body)
+	safeHeaders := trace.Sanitize([]byte(fmt.Sprintf("%v", req.Header)))
+	c.log.Debug("--> %s %s\nHeaders: %s\nBody: %s", req.Method, req.URL.String(), string(safeHeaders), string(safeBody))
 }
 
 func (c *Client) debugResponse(statusCode int, body []byte) {

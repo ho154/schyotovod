@@ -7,6 +7,7 @@
 package gmail
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"mime"
@@ -18,7 +19,29 @@ import (
 	"github.com/emersion/go-message"
 	_ "github.com/emersion/go-message/charset" // регистрация кодировок (в т.ч. для кириллицы)
 	"github.com/emersion/go-message/mail"
+
+	"schyotovod/internal/trace"
 )
+
+// recordIMAP фиксирует одну IMAP-операцию как псевдо-эндпоинт в trace.Collector
+// из контекста (если он есть). Пароли/секреты маскируются внутри Collector.
+func recordIMAP(ctx context.Context, command, target, detail string, started time.Time, callErr error) {
+	col := trace.FromContext(ctx)
+	if col == nil {
+		return
+	}
+	step := trace.Step{
+		Kind:        trace.KindIMAP,
+		Method:      command,
+		Endpoint:    "IMAP " + command + " " + target,
+		RequestBody: detail,
+		DurationMs:  time.Since(started).Milliseconds(),
+	}
+	if callErr != nil {
+		step.Error = callErr.Error()
+	}
+	col.Record(step)
+}
 
 // Attachment — извлечённое вложение письма.
 type Attachment struct {
@@ -85,8 +108,11 @@ func Connect(cfg DialConfig, mailboxHandler func()) (*imapclient.Client, error) 
 }
 
 // SelectInbox выбирает папку INBOX.
-func SelectInbox(client *imapclient.Client) error {
-	if _, err := client.Select("INBOX", nil).Wait(); err != nil {
+func SelectInbox(ctx context.Context, client *imapclient.Client) error {
+	started := time.Now()
+	_, err := client.Select("INBOX", nil).Wait()
+	recordIMAP(ctx, "SELECT", "INBOX", "", started, err)
+	if err != nil {
 		return fmt.Errorf("не удалось открыть папку «Входящие»: %w", err)
 	}
 	return nil
@@ -101,7 +127,7 @@ type SearchCriteria struct {
 
 // Search выполняет поиск писем по отправителю и диапазону дат.
 // Возвращает список UID подходящих писем.
-func Search(client *imapclient.Client, c SearchCriteria) ([]imap.UID, error) {
+func Search(ctx context.Context, client *imapclient.Client, c SearchCriteria) ([]imap.UID, error) {
 	criteria := &imap.SearchCriteria{}
 	if c.SenderEmail != "" {
 		criteria.Header = append(criteria.Header, imap.SearchCriteriaHeaderField{
@@ -116,16 +142,22 @@ func Search(client *imapclient.Client, c SearchCriteria) ([]imap.UID, error) {
 		criteria.Before = c.Before
 	}
 
+	detail := fmt.Sprintf("From=%s Since=%s Before=%s", c.SenderEmail,
+		c.Since.Format("2006-01-02"), c.Before.Format("2006-01-02"))
+	started := time.Now()
 	data, err := client.UIDSearch(criteria, nil).Wait()
 	if err != nil {
+		recordIMAP(ctx, "SEARCH", "INBOX", detail, started, err)
 		return nil, fmt.Errorf("ошибка поиска писем: %w", err)
 	}
-	return data.AllUIDs(), nil
+	uids := data.AllUIDs()
+	recordIMAP(ctx, "SEARCH", "INBOX", detail+fmt.Sprintf(" → найдено UID: %d", len(uids)), started, nil)
+	return uids, nil
 }
 
 // FetchMessage скачивает письмо целиком по UID и разбирает его MIME-структуру,
 // извлекая метаданные и вложения (части с Content-Disposition: attachment).
-func FetchMessage(client *imapclient.Client, uid imap.UID) (*Message, error) {
+func FetchMessage(ctx context.Context, client *imapclient.Client, uid imap.UID) (*Message, error) {
 	uidSet := imap.UIDSetNum(uid)
 	opts := &imap.FetchOptions{
 		Envelope:    true,
@@ -133,10 +165,14 @@ func FetchMessage(client *imapclient.Client, uid imap.UID) (*Message, error) {
 		BodySection: []*imap.FetchItemBodySection{{}}, // всё письмо целиком
 	}
 
+	target := fmt.Sprintf("UID %v", uid)
+	started := time.Now()
 	msgs, err := client.Fetch(uidSet, opts).Collect()
 	if err != nil {
+		recordIMAP(ctx, "FETCH", target, "", started, err)
 		return nil, fmt.Errorf("не удалось скачать письмо: %w", err)
 	}
+	recordIMAP(ctx, "FETCH", target, fmt.Sprintf("получено сообщений: %d", len(msgs)), started, nil)
 	if len(msgs) == 0 {
 		return nil, fmt.Errorf("письмо с UID %v не найдено", uid)
 	}

@@ -43,6 +43,94 @@
 </div>
 
 <div class="card">
+  <h1 style="margin-bottom:12px">Журнал событий</h1>
+  <p class="hint" style="margin-bottom:12px">Все обработанные письма со счетами: статус, этап обработки, данные счёта и лицензии. Клик по строке разворачивает таймлайн этапов и полный трейс запросов к Pyrus и почте (эндпоинты и тела) — инструмент анализа, на каком этапе и что пошло не так.</p>
+
+  <form method="get" action="/logs" class="jfilters">
+    <div class="field">
+      <label for="jclient" style="margin:0 0 4px">Клиент</label>
+      <input type="text" id="jclient" name="jclient" value="{{.JClient}}" placeholder="часть названия">
+    </div>
+    <div class="field">
+      <label for="jstatus" style="margin:0 0 4px">Статус</label>
+      <select id="jstatus" name="jstatus">
+        <option value="" {{if eq .JStatus ""}}selected{{end}}>Все</option>
+        <option value="ok" {{if eq .JStatus "ok"}}selected{{end}}>Успешно</option>
+        <option value="ошибка" {{if eq .JStatus "ошибка"}}selected{{end}}>Ошибки</option>
+        <option value="ожидание" {{if eq .JStatus "ожидание"}}selected{{end}}>Ожидание/отложено</option>
+        <option value="пропущено" {{if eq .JStatus "пропущено"}}selected{{end}}>Пропущено</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="jsort" style="margin:0 0 4px">Сортировка</label>
+      <select id="jsort" name="jsort">
+        <option value="msg_date" {{if eq .JSort "msg_date"}}selected{{end}}>По дате письма</option>
+        <option value="client" {{if eq .JSort "client"}}selected{{end}}>По клиенту</option>
+        <option value="invoice_no" {{if eq .JSort "invoice_no"}}selected{{end}}>По номеру счёта</option>
+        <option value="amount" {{if eq .JSort "amount"}}selected{{end}}>По сумме</option>
+        <option value="status" {{if eq .JSort "status"}}selected{{end}}>По статусу</option>
+        <option value="updated" {{if eq .JSort "updated"}}selected{{end}}>По обновлению</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="jdir" style="margin:0 0 4px">Порядок</label>
+      <select id="jdir" name="jdir">
+        <option value="desc" {{if ne .JDir "asc"}}selected{{end}}>Убывание</option>
+        <option value="asc" {{if eq .JDir "asc"}}selected{{end}}>Возрастание</option>
+      </select>
+    </div>
+    <div class="field" style="min-width:auto">
+      <button type="submit" class="btn secondary">Применить</button>
+    </div>
+  </form>
+
+  {{if .Events}}
+  <div class="jtablewrap">
+  <table class="journal">
+    <thead>
+      <tr>
+        <th>Дата письма</th>
+        <th>Клиент</th>
+        <th>Счёт №</th>
+        <th>Дата счёта</th>
+        <th>Лицензия №</th>
+        <th>Сумма</th>
+        <th>Статус</th>
+        <th>Этап</th>
+        <th>Задача Pyrus</th>
+        <th>Статус в Pyrus</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Events}}
+      <tr class="jrow" data-id="{{.ID}}">
+        <td>{{fmtDateTime .MsgDate}}</td>
+        <td class="jclient">{{if .ClientName}}{{.ClientName}}{{else}}—{{end}}</td>
+        <td>{{if .InvoiceNo}}{{.InvoiceNo}}{{else}}—{{end}}</td>
+        <td>{{fmtDate .InvoiceDate}}</td>
+        <td>{{if .LicenseNo}}{{.LicenseNo}}{{else}}—{{end}}</td>
+        <td>{{fmtAmount .Amount}}</td>
+        <td>
+          {{if eq (printf "%s" .OverallStatus) "ok"}}<span class="badge ok">прикреплено</span>
+          {{else if eq (printf "%s" .OverallStatus) "ошибка"}}<span class="badge err">ошибка</span>
+          {{else if eq (printf "%s" .OverallStatus) "ожидание"}}<span class="badge pending">ожидание</span>
+          {{else if eq (printf "%s" .OverallStatus) "пропущено"}}<span class="badge skip">пропущено</span>
+          {{else}}<span class="badge">{{.OverallStatus}}</span>{{end}}
+        </td>
+        <td>{{.CurrentStage}}{{if .ErrorStage}} <span class="muted">({{.ErrorStage}})</span>{{end}}</td>
+        <td>{{if .TaskID}}<a href="https://pyrus.com/t#id{{.TaskID}}" target="_blank" rel="noopener">#{{.TaskID}}</a>{{if .ClientName}} <span class="muted">({{.ClientName}})</span>{{end}}{{else}}—{{end}}</td>
+        <td>{{if .PyrusTaskStatus}}{{.PyrusTaskStatus}}{{else}}—{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{else}}
+  <p class="muted">Записей журнала пока нет.</p>
+  {{end}}
+</div>
+
+<div class="card">
   <h1>Логи</h1>
   <form method="get" action="/logs" style="margin-bottom:16px">
     <div class="row">
@@ -186,6 +274,83 @@
         });
     });
   }
+
+  // --- Журнал событий: разворачивание строки с таймлайном и трейсом ---
+  function stageBadge(stage, errStage) {
+    var cls = (errStage && stage === errStage) ? 'jstage err' : 'jstage ok';
+    return '<span class="' + cls + '">' + escapeHtml(stage) + '</span>';
+  }
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function(c) {
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  function renderTrace(data) {
+    var ev = data.event || {};
+    var steps = data.steps || [];
+    var html = '';
+    // Таймлайн этапов (порядок фиксированный).
+    var order = ['получено','разбор_письма','разбор_имени_файла','авторизация_pyrus','поиск_задачи','загрузка_файла','обновление_задачи','завершено'];
+    html += '<div class="jtimeline">';
+    order.forEach(function(st) {
+      var reached = false;
+      steps.forEach(function(s){ if (s.stage === st) reached = true; });
+      if (st === ev.current_stage) reached = true;
+      var cls = 'jstage';
+      if (ev.error_stage && st === ev.error_stage) cls = 'jstage err';
+      else if (reached) cls = 'jstage ok';
+      html += '<span class="' + cls + '">' + escapeHtml(st) + '</span>';
+    });
+    html += '</div>';
+    if (ev.error_message) {
+      html += '<div class="alert err" style="margin-bottom:10px">Ошибка (этап ' + escapeHtml(ev.error_stage) + '): ' + escapeHtml(ev.error_message) + '</div>';
+    }
+    // Ссылка на связанные строки текстового лога.
+    if (ev.message_id) {
+      html += '<div style="margin-bottom:10px"><a class="btn secondary" href="/logs?msg=' + encodeURIComponent(ev.message_id) + '">Показать связанные строки текстового лога</a></div>';
+    }
+    // Шаги (HTTP/IMAP).
+    if (!steps.length) {
+      html += '<p class="muted">Трейс запросов пуст.</p>';
+    } else {
+      steps.forEach(function(s) {
+        html += '<div class="jstep">';
+        html += '<div class="ep">' + escapeHtml(s.method) + ' ' + escapeHtml(s.endpoint) +
+                (s.status_code ? ' → HTTP ' + s.status_code : '') +
+                ' <span class="muted">(' + (s.duration_ms||0) + ' мс, этап: ' + escapeHtml(s.stage) + ')</span></div>';
+        if (s.error) html += '<div class="alert err" style="margin:4px 0">' + escapeHtml(s.error) + '</div>';
+        if (s.request_body) html += '<div class="muted" style="margin-top:4px">Запрос:</div><pre>' + escapeHtml(s.request_body) + '</pre>';
+        if (s.response_body) html += '<div class="muted" style="margin-top:4px">Ответ:</div><pre>' + escapeHtml(s.response_body) + '</pre>';
+        html += '</div>';
+      });
+    }
+    return html;
+  }
+
+  document.querySelectorAll('tr.jrow').forEach(function(row) {
+    row.addEventListener('click', function() {
+      var id = row.getAttribute('data-id');
+      var next = row.nextElementSibling;
+      // Если уже развёрнуто — свернуть.
+      if (next && next.classList.contains('jdetail')) {
+        next.parentNode.removeChild(next);
+        return;
+      }
+      var detail = document.createElement('tr');
+      detail.className = 'jdetail';
+      var td = document.createElement('td');
+      td.setAttribute('colspan', '10');
+      td.innerHTML = '<p class="muted">Загрузка трейса…</p>';
+      detail.appendChild(td);
+      row.parentNode.insertBefore(detail, row.nextSibling);
+
+      fetch('/logs/trace/' + encodeURIComponent(id))
+        .then(function(res){ return res.json(); })
+        .then(function(data){ td.innerHTML = renderTrace(data); })
+        .catch(function(err){ td.innerHTML = '<div class="alert err">Не удалось загрузить трейс: ' + escapeHtml(err.message) + '</div>'; });
+    });
+  });
 })();
 </script>
 

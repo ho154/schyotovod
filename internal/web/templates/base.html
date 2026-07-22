@@ -19,6 +19,7 @@
     header nav a { margin-left: 18px; color: var(--muted); text-decoration: none; }
     header nav a.active, header nav a:hover { color: var(--primary); }
     .container { max-width: 900px; margin: 24px auto; padding: 0 16px; }
+    .container.wide { max-width: 1320px; }
     .card { background: var(--card); border: 1px solid var(--border);
       border-radius: 10px; padding: 24px; margin-bottom: 20px; }
     h1 { font-size: 22px; margin: 0 0 16px; }
@@ -57,6 +58,30 @@
     .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 12px; font-weight: 600; }
     .badge.ok { background: #ecfdf5; color: var(--ok); }
     .badge.new { background: #eff6ff; color: var(--primary); }
+    .badge.err { background: #fef2f2; color: var(--err); }
+    .badge.pending { background: #fffbeb; color: var(--warn); }
+    .badge.skip { background: #f3f4f6; color: var(--muted); }
+    .jtablewrap { overflow-x: auto; max-width: 100%; }
+    table.journal { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.journal th, table.journal td { padding: 7px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; white-space: nowrap; }
+    table.journal td.jclient { white-space: normal; max-width: 180px; word-break: break-word; }
+    table.journal tr.jdetail > td { white-space: normal; }
+    table.journal th a { color: var(--muted); text-decoration: none; }
+    table.journal th a:hover { color: var(--primary); }
+    table.journal tr.jrow { cursor: pointer; }
+    table.journal tr.jrow:hover { background: var(--hint); }
+    table.journal tr.jdetail > td { background: #f9fafb; }
+    .jtimeline { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .jstage { padding: 2px 8px; border-radius: 6px; font-size: 12px; background: #eef2f7; color: var(--muted); }
+    .jstage.ok { background: #ecfdf5; color: var(--ok); }
+    .jstage.err { background: #fef2f2; color: var(--err); }
+    .jstep { border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin-bottom: 8px; font-size: 12px; }
+    .jstep .ep { font-weight: 600; }
+    .jstep { max-width: 100%; overflow: hidden; }
+    .jstep pre { background: #0f172a; color: #cbd5e1; padding: 8px; border-radius: 6px; overflow: auto; max-height: 220px; white-space: pre-wrap; word-break: break-all; overflow-wrap: anywhere; margin: 4px 0 0; }
+    table.journal tr.jdetail > td { max-width: 0; }
+    .jfilters { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
+    .jfilters .field { min-width: 150px; }
   </style>
 </head>
 <body>
@@ -71,7 +96,7 @@
     </nav>
   </header>
   {{end}}
-  <div class="{{if .ShowNav}}container{{else}}login-wrap{{end}}">
+  <div class="{{if .ShowNav}}container{{if .Wide}} wide{{end}}{{else}}login-wrap{{end}}">
     {{template "content" .}}
   </div>
 </body>

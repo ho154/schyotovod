@@ -16,6 +16,7 @@ import (
 	"schyotovod/internal/config"
 	"schyotovod/internal/dedup"
 	"schyotovod/internal/invoice"
+	"schyotovod/internal/journal"
 	"schyotovod/internal/logger"
 	"schyotovod/internal/updater"
 	"schyotovod/internal/version"
@@ -54,7 +55,10 @@ func main() {
 		}
 		fmt.Println("Результаты парсинга:")
 		fmt.Printf("  Клиент: %s\n", info.ClientName)
-		fmt.Printf("  Номер счета: %s\n", info.InvoiceNo)
+		fmt.Printf("  Номер лицензии: %s\n", info.LicenseNo)
+		if !info.LicenseDate.IsZero() {
+			fmt.Printf("  Дата лицензии: %s\n", info.LicenseDate.Format("02.01.2006"))
+		}
 		fmt.Printf("  Сумма: %.2f\n", info.Amount)
 		return
 	}
@@ -137,9 +141,19 @@ func runService(cfgMgr *config.Manager, dataDir string) {
 		os.Exit(1)
 	}
 
+	// Журнал событий (структурированные записи + трейсы запросов).
+	journalDir := filepath.Join(dataDir, "journal")
+	jMgr, err := journal.New(journalDir, loc)
+	if err != nil {
+		log.Error("Ошибка инициализации журнала событий: %v", err)
+		os.Exit(1)
+	}
+	// Очистка журнала по тому же сроку хранения, что и текстовые логи.
+	startJournalCleanup(stop, jMgr, log, func() int { return cfgMgr.Get().General.LogRetentionDays })
+
 	// Наблюдатель за почтой.
 	updater.SetVersionGetter(func() string { return version.Version })
-	w := watcher.New(cfgMgr, dd, attMgr, log)
+	w := watcher.New(cfgMgr, dd, attMgr, jMgr, log)
 	go w.Run()
 
 	// Менеджер обновлений.
@@ -147,7 +161,7 @@ func runService(cfgMgr *config.Manager, dataDir string) {
 	updMgr.StartScheduler()
 
 	// Веб-панель.
-	srv, err := web.New(cfgMgr, log, w, updMgr)
+	srv, err := web.New(cfgMgr, log, w, updMgr, jMgr)
 	if err != nil {
 		log.Error("Ошибка инициализации веб-панели: %v", err)
 		os.Exit(1)
@@ -261,6 +275,32 @@ func runInitAdmin(cfgMgr *config.Manager, login, password string) error {
 	cfg.Web.AdminPasswordHash = hash
 	cfg.Web.MustChangePassword = false
 	return cfgMgr.Set(cfg)
+}
+
+// startJournalCleanup запускает фоновую очистку журнала событий раз в сутки,
+// синхронно с очисткой текстовых логов, используя тот же срок хранения
+// (general.log_retention_days).
+func startJournalCleanup(stop <-chan struct{}, jMgr *journal.Manager, log *logger.Logger, retention func() int) {
+	go func() {
+		clean := func() {
+			if n, err := jMgr.Cleanup(retention()); err != nil {
+				log.Error("Очистка журнала событий: %v", err)
+			} else if n > 0 {
+				log.Info("Очистка журнала событий: удалено устаревших записей — %d", n)
+			}
+		}
+		clean()
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				clean()
+			}
+		}
+	}()
 }
 
 // defaultDataDir возвращает каталог данных по умолчанию в зависимости от ОС.

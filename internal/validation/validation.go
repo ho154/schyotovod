@@ -105,7 +105,7 @@ func validateGmail(_ context.Context, cfg config.Config, res *Result) {
 	defer client.Logout()
 	defer client.Close()
 
-	if err := gmail.SelectInbox(client); err != nil {
+	if err := gmail.SelectInbox(context.Background(), client); err != nil {
 		res.Errors = append(res.Errors, FieldError{
 			Field:   "gmail.email",
 			Message: "Почта подключена, но не удалось открыть папку «Входящие»: " + shortErr(err),

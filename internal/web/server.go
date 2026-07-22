@@ -5,6 +5,7 @@ package web
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -18,8 +19,10 @@ import (
 	"schyotovod/internal/gmail"
 	"schyotovod/internal/i18n"
 	"schyotovod/internal/invoice"
+	"schyotovod/internal/journal"
 	"schyotovod/internal/logger"
 	"schyotovod/internal/pyrus"
+	"schyotovod/internal/trace"
 	"schyotovod/internal/updater"
 	"schyotovod/internal/validation"
 	"schyotovod/internal/version"
@@ -39,7 +42,14 @@ var attachmentFieldTypes = map[string]bool{
 
 // Checker выполняет разовую проверку почты (реализуется watcher).
 type Checker interface {
-	CheckNow() (int, error)
+	CheckNow() (watcher.CheckSummary, error)
+}
+
+// Journal — интерфейс журнала событий для веб-панели (реализуется journal.Manager).
+type Journal interface {
+	List(opts journal.ListOptions) []journal.Event
+	Get(id string) (journal.Event, bool)
+	LoadTrace(eventID string) ([]trace.Step, error)
 }
 
 // UpdateApplier применяет обновление (реализуется в main/updater-обвязке).
@@ -56,17 +66,19 @@ type Server struct {
 	sessions  *auth.SessionStore
 	checker   Checker
 	applier   UpdateApplier
+	journal   Journal // может быть nil
 	templates map[string]*template.Template
 }
 
-// New создаёт веб-сервер.
-func New(cfgMgr *config.Manager, log *logger.Logger, checker Checker, applier UpdateApplier) (*Server, error) {
+// New создаёт веб-сервер. jr — журнал событий (может быть nil).
+func New(cfgMgr *config.Manager, log *logger.Logger, checker Checker, applier UpdateApplier, jr Journal) (*Server, error) {
 	s := &Server{
 		cfgMgr:    cfgMgr,
 		log:       log,
 		sessions:  auth.NewSessionStore(),
 		checker:   checker,
 		applier:   applier,
+		journal:   jr,
 		templates: make(map[string]*template.Template),
 	}
 
@@ -81,7 +93,10 @@ func New(cfgMgr *config.Manager, log *logger.Logger, checker Checker, applier Up
 			continue
 		}
 		tmpl := template.New(name).Funcs(template.FuncMap{
-			"F": s.fieldData,
+			"F":           s.fieldData,
+			"fmtDate":     fmtDate,
+			"fmtDateTime": fmtDateTime,
+			"fmtAmount":   fmtAmount,
 		})
 		tmpl, err = tmpl.ParseFS(templatesFS, "templates/base.html", "templates/"+name)
 		if err != nil {
@@ -108,6 +123,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/check-now", s.auth(s.handleCheckNow))
 	mux.HandleFunc("/logs", s.auth(s.handleLogs))
 	mux.HandleFunc("/logs/stream", s.auth(s.handleLogsStream))
+	mux.HandleFunc("/logs/trace/", s.auth(s.handleTrace))
 	mux.HandleFunc("/updates", s.auth(s.handleUpdates))
 	mux.HandleFunc("/settings-update", s.auth(s.handleSettingsUpdate))
 	mux.HandleFunc("/check-updates", s.auth(s.handleCheckUpdates))
@@ -363,7 +379,7 @@ func (s *Server) handleCheckNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("Запущена ручная проверка почты («Проверить сейчас»)")
-	n, err := s.checker.CheckNow()
+	summary, err := s.checker.CheckNow()
 
 	cfg := s.cfgMgr.Get()
 	page := map[string]any{
@@ -377,9 +393,8 @@ func (s *Server) handleCheckNow(w http.ResponseWriter, r *http.Request) {
 		page["HasErrors"] = true
 		page["FieldErrors"] = map[string]string{"gmail.email": "Проверка не удалась: " + err.Error()}
 	} else {
-		s.log.Info("Ручная проверка почты завершена, обработано писем: %d", n)
 		page["Saved"] = false
-		page["CheckResult"] = fmt.Sprintf("Проверка завершена. Обработано новых писем: %d.", n)
+		page["CheckResult"] = summaryMessage(summary)
 	}
 	if msg, ok := page["CheckResult"].(string); ok {
 		page["Flash"] = msg
@@ -396,6 +411,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		selectedDate = dates[0]
 	}
 	level := r.URL.Query().Get("level")
+	msgFilter := r.URL.Query().Get("msg")
 
 	isToday := len(dates) > 0 && selectedDate == dates[0]
 
@@ -406,20 +422,97 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	var content string
 	if selectedDate != "" {
-		content, _ = s.log.ReadLog(selectedDate, logger.Level(level))
+		content, _ = s.log.ReadLogFiltered(selectedDate, logger.Level(level), msgFilter)
 		if isToday && scope == "session" {
 			content = filterCurrentSessionLogs(content)
 		}
 	}
 
+	// Данные журнала событий (с сортировкой/фильтрами из query).
+	var events []journal.Event
+	jStatus := r.URL.Query().Get("jstatus")
+	jClient := r.URL.Query().Get("jclient")
+	jSort := r.URL.Query().Get("jsort")
+	jDir := r.URL.Query().Get("jdir")
+	if s.journal != nil {
+		events = s.journal.List(journal.ListOptions{
+			Status:     jStatus,
+			Client:     jClient,
+			SortBy:     jSort,
+			Descending: jDir != "asc",
+		})
+	}
+
 	cfg := s.cfgMgr.Get()
 	s.render(w, "logs.html", map[string]any{
-		"Title": "Логи", "ShowNav": true, "Active": "logs",
+		"Title": "Логи", "ShowNav": true, "Active": "logs", "Wide": true,
 		"Dates": dates, "SelectedDate": selectedDate,
 		"SelectedLevel": level, "Content": content,
 		"IsToday":       isToday,
 		"SelectedScope": scope,
 		"DebugLogging":  cfg.General.DebugLogging,
+		"MsgFilter":     msgFilter,
+		"Events":        events,
+		"JStatus":       jStatus,
+		"JClient":       jClient,
+		"JSort":         jSort,
+		"JDir":          jDir,
+	})
+}
+
+// fmtDate форматирует дату для таблицы журнала (пустая при нулевой дате).
+func fmtDate(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	return t.Format("02.01.2006")
+}
+
+// fmtDateTime форматирует дату и время (для даты письма).
+func fmtDateTime(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	return t.Format("02.01.2006 15:04")
+}
+
+// fmtAmount форматирует денежную сумму.
+func fmtAmount(a float64) string {
+	if a == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%.2f", a)
+}
+
+// summaryMessage формирует краткое человекочитаемое сообщение по итогам
+// проверки почты для показа в веб-панели.
+func summaryMessage(s watcher.CheckSummary) string {
+	return fmt.Sprintf("Проверка завершена. Найдено новых: %d, успешно: %d, с ошибками: %d, отложено: %d, пропущено: %d.",
+		s.Found, s.Processed, s.Failed, s.Deferred, s.Skipped)
+}
+
+// handleTrace отдаёт JSON с полным трейсом HTTP/IMAP-шагов по event ID.
+// Путь: /logs/trace/<event_id>.
+func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
+	if s.journal == nil {
+		http.Error(w, "журнал недоступен", http.StatusNotFound)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/logs/trace/")
+	if id == "" {
+		http.Error(w, "не указан идентификатор события", http.StatusBadRequest)
+		return
+	}
+	steps, err := s.journal.LoadTrace(id)
+	if err != nil {
+		http.Error(w, "ошибка загрузки трейса: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ev, _ := s.journal.Get(id)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"event": ev,
+		"steps": steps,
 	})
 }
 
@@ -644,7 +737,7 @@ func (s *Server) handleCheckEmailAccess(w http.ResponseWriter, r *http.Request) 
 	defer client.Logout()
 	defer client.Close()
 
-	if err := gmail.SelectInbox(client); err != nil {
+	if err := gmail.SelectInbox(context.Background(), client); err != nil {
 		s.log.Error("ОШИБКА ПОЧТЫ: Не удалось выбрать INBOX при проверке: %v", err)
 		s.writeJSONResponse(w, false, "Ошибка выбора INBOX: "+err.Error())
 		return
@@ -663,14 +756,13 @@ func (s *Server) handleCheckEmails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("Запуск ручной проверки писем из веб-панели")
-	n, err := s.checker.CheckNow()
+	summary, err := s.checker.CheckNow()
 	if err != nil {
 		s.log.Error("ОШИБКА ПОЧТЫ: Ручная проверка писем не удалась: %v", err)
 		s.writeJSONResponse(w, false, "Ошибка при ручной проверке писем: "+err.Error())
 		return
 	}
-	s.log.Info("Ручная проверка писем завершена. Обработано новых писем: %d", n)
-	s.writeJSONResponse(w, true, fmt.Sprintf("Ручная проверка завершена. Обработано новых писем: %d.", n))
+	s.writeJSONResponse(w, true, summaryMessage(summary))
 }
 
 func (s *Server) handleCheckPyrusAccess(w http.ResponseWriter, r *http.Request) {
@@ -769,13 +861,13 @@ func (s *Server) handleResetAttempts(w http.ResponseWriter, r *http.Request) {
 		resetter.ResetAttempts()
 	}
 
-	n, err := s.checker.CheckNow()
+	summary, err := s.checker.CheckNow()
 	if err != nil {
 		s.writeJSONResponse(w, false, "Таймеры сброшены, но при проверке почты возникла ошибка: "+err.Error())
 		return
 	}
 
-	s.writeJSONResponse(w, true, fmt.Sprintf("Таймеры попыток сброшены. Повторная отправка счетов запущена. Обработано писем: %d.", n))
+	s.writeJSONResponse(w, true, "Таймеры попыток сброшены. Повторная отправка счетов запущена. "+summaryMessage(summary))
 }
 
 func (s *Server) handleTestUpload(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@
 package logger
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -145,6 +146,36 @@ func (l *Logger) write(level Level, msg string) {
 	l.publish(line)
 }
 
+// msgIDKey — ключ контекста для привязки строк лога к конкретному письму.
+type msgIDKey struct{}
+
+// WithMessageID возвращает контекст с привязкой к Message-ID письма. Строки
+// лога, записанные через *Ctx-методы с этим контекстом, получат суффикс
+// [msg:<id>], по которому их можно отфильтровать в веб-панели (связать строку
+// журнала с относящимися к ней строками текстового лога).
+func WithMessageID(ctx context.Context, messageID string) context.Context {
+	return context.WithValue(ctx, msgIDKey{}, messageID)
+}
+
+// messageIDFrom извлекает Message-ID из контекста (пустая строка, если нет).
+func messageIDFrom(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if id, ok := ctx.Value(msgIDKey{}).(string); ok {
+		return id
+	}
+	return ""
+}
+
+// withMsgTag добавляет суффикс [msg:<id>] к сообщению, если в ctx есть ID.
+func withMsgTag(ctx context.Context, msg string) string {
+	if id := messageIDFrom(ctx); id != "" {
+		return msg + " [msg:" + id + "]"
+	}
+	return msg
+}
+
 // Info пишет информационное сообщение.
 func (l *Logger) Info(format string, args ...any) {
 	l.write(LevelInfo, fmt.Sprintf(format, args...))
@@ -158,6 +189,21 @@ func (l *Logger) Warn(format string, args ...any) {
 // Error пишет сообщение об ошибке.
 func (l *Logger) Error(format string, args ...any) {
 	l.write(LevelError, fmt.Sprintf(format, args...))
+}
+
+// InfoCtx пишет информационное сообщение с тегом [msg:<id>] из контекста.
+func (l *Logger) InfoCtx(ctx context.Context, format string, args ...any) {
+	l.write(LevelInfo, withMsgTag(ctx, fmt.Sprintf(format, args...)))
+}
+
+// WarnCtx пишет предупреждение с тегом [msg:<id>] из контекста.
+func (l *Logger) WarnCtx(ctx context.Context, format string, args ...any) {
+	l.write(LevelWarn, withMsgTag(ctx, fmt.Sprintf(format, args...)))
+}
+
+// ErrorCtx пишет ошибку с тегом [msg:<id>] из контекста.
+func (l *Logger) ErrorCtx(ctx context.Context, format string, args ...any) {
+	l.write(LevelError, withMsgTag(ctx, fmt.Sprintf(format, args...)))
 }
 
 // Debug пишет отладочное сообщение (полные тела API-запросов/ответов и т.п.),
@@ -317,6 +363,13 @@ func (l *Logger) ListLogDates() ([]string, error) {
 // ReadLog возвращает содержимое лога за указанную дату (формат YYYY-MM-DD).
 // Если задан levelFilter (непустой), возвращаются только строки с этим уровнем.
 func (l *Logger) ReadLog(date string, levelFilter Level) (string, error) {
+	return l.ReadLogFiltered(date, levelFilter, "")
+}
+
+// ReadLogFiltered возвращает содержимое лога за дату с фильтрацией по уровню
+// (levelFilter) и/или по Message-ID письма (msgID). Пустые фильтры не
+// применяются. Фильтр по msgID ищет строки с тегом [msg:<id>].
+func (l *Logger) ReadLogFiltered(date string, levelFilter Level, msgID string) (string, error) {
 	if !dateFileRe.MatchString(date + ".log") {
 		return "", fmt.Errorf("некорректная дата лога: %q", date)
 	}
@@ -325,16 +378,27 @@ func (l *Logger) ReadLog(date string, levelFilter Level) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("не удалось прочитать лог за %s: %w", date, err)
 	}
-	if levelFilter == "" {
+	if levelFilter == "" && msgID == "" {
 		return string(data), nil
 	}
 	var b strings.Builder
-	needle := "[" + string(levelFilter) + "]"
+	levelNeedle := ""
+	if levelFilter != "" {
+		levelNeedle = "[" + string(levelFilter) + "]"
+	}
+	msgNeedle := ""
+	if msgID != "" {
+		msgNeedle = "[msg:" + msgID + "]"
+	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.Contains(line, needle) {
-			b.WriteString(line)
-			b.WriteByte('\n')
+		if levelNeedle != "" && !strings.Contains(line, levelNeedle) {
+			continue
 		}
+		if msgNeedle != "" && !strings.Contains(line, msgNeedle) {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
 	}
 	return b.String(), nil
 }

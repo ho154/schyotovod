@@ -16,6 +16,10 @@ type AttemptState struct {
 	NextAttempt   time.Time `json:"next_attempt"`
 	Ignored       bool      `json:"ignored"`
 	LastMessageID string    `json:"last_message_id,omitempty"`
+	// LastTaskID — ID последней найденной задачи Pyrus для этого клиента.
+	// Позволяет в сообщениях об отсрочке ссылаться на задачу без повторного
+	// похода в Pyrus за её поиском.
+	LastTaskID int `json:"last_task_id,omitempty"`
 }
 
 // store описывает структуру файла сохранения попыток.
@@ -165,6 +169,21 @@ func (m *Manager) RecordAttemptWithMsg(client string, success bool, maxAttempts 
 	m.data.Tasks[client] = state
 	_ = m.save()
 	return state
+}
+
+// SetLastTaskID сохраняет ID найденной задачи Pyrus для клиента, чтобы позже
+// в сообщениях об отсрочке можно было сослаться на задачу без повторного поиска.
+func (m *Manager) SetLastTaskID(client string, taskID int) {
+	if taskID == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureCurrentMonth()
+	state := m.data.Tasks[client]
+	state.LastTaskID = taskID
+	m.data.Tasks[client] = state
+	_ = m.save()
 }
 
 // ResetAttempt сбрасывает состояние попыток для конкретного клиента.
