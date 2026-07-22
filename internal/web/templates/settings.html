@@ -1,0 +1,106 @@
+{{define "content"}}
+<div class="card">
+  <h1>Настройки</h1>
+
+  {{if .Saved}}<div class="alert ok">Настройки сохранены и успешно проверены.</div>{{end}}
+  {{if .HasErrors}}<div class="alert err">Настройки не сохранены: обнаружены ошибки. Прежние настройки продолжают действовать. Исправьте отмеченные поля.</div>{{end}}
+  {{if .MustChangePassword}}<div class="alert warn">Вы вошли с временным паролем. Задайте новый пароль администратора в разделе «Доступ к панели» ниже.</div>{{end}}
+
+  <form method="post" action="/settings">
+
+    <h2>Почта (Gmail)</h2>
+    {{template "field" (F . "gmail.email" "text" .Cfg.Gmail.Email)}}
+    {{template "field" (F . "gmail.app_password" "password" .Cfg.Gmail.AppPassword)}}
+    <div class="row">
+      <div>{{template "field" (F . "gmail.imap_host" "text" .Cfg.Gmail.IMAPHost)}}</div>
+      <div>{{template "field" (F . "gmail.imap_port" "number" .Cfg.Gmail.IMAPPort)}}</div>
+    </div>
+
+    <h2>Отбор писем и период проверки</h2>
+    {{template "field" (F . "filter.sender_email" "text" .Cfg.Filter.SenderEmail)}}
+    <div class="row">
+      <div>{{template "field" (F . "filter.start_day" "number" .Cfg.Filter.StartDay)}}</div>
+      <div>{{template "field" (F . "filter.end_day" "number" .Cfg.Filter.EndDay)}}</div>
+      <div>{{template "field" (F . "filter.fallback_poll_interval_minutes" "number" .Cfg.Filter.FallbackPollIntervalMinutes)}}</div>
+    </div>
+
+    <h2>Pyrus</h2>
+    {{template "field" (F . "pyrus.login" "text" .Cfg.Pyrus.Login)}}
+    {{template "field" (F . "pyrus.security_key" "password" .Cfg.Pyrus.SecurityKey)}}
+    <div class="row">
+      <div>{{template "field" (F . "pyrus.form_id" "text" .Cfg.Pyrus.FormID)}}</div>
+      <div>{{template "field" (F . "pyrus.attachment_field_id" "number" .Cfg.Pyrus.AttachmentFieldID)}}</div>
+      <div>{{template "field" (F . "pyrus.client_name_field_id" "number" .Cfg.Pyrus.ClientNameFieldID)}}</div>
+      <div>{{template "field" (F . "pyrus.amount_field_id" "number" .Cfg.Pyrus.AmountFieldID)}}</div>
+    </div>
+    <div class="row">
+      <div>{{template "field" (F . "pyrus.max_update_attempts" "number" .Cfg.Pyrus.MaxUpdateAttempts)}}</div>
+      <div>{{template "field" (F . "pyrus.retry_interval_minutes" "number" .Cfg.Pyrus.RetryIntervalMinutes)}}</div>
+    </div>
+
+    <h2>Общие</h2>
+    <div class="row">
+      <div>{{template "timezone-field" .}}</div>
+      <div>{{template "field" (F . "general.log_retention_days" "number" .Cfg.General.LogRetentionDays)}}</div>
+    </div>
+    <h2>Панель управления</h2>
+    {{template "field" (F . "web.port" "number" .Cfg.Web.Port)}}
+
+    <div class="actions">
+      <button type="submit" class="btn">Сохранить и проверить</button>
+      <a href="/check-now" class="btn secondary" onclick="this.classList.add('disabled')">Проверить сейчас</a>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;border:0">Доступ к панели (логин и пароль администратора)</h2>
+  {{if .PasswordChanged}}<div class="alert ok">Пароль администратора изменён.</div>{{end}}
+  {{if .PasswordError}}<div class="alert err">{{.PasswordError}}</div>{{end}}
+  <form method="post" action="/change-password">
+    <div class="field">
+      <label>Текущий пароль</label>
+      <input type="password" name="current_password" {{if not .MustChangePassword}}required{{end}}>
+      {{if .MustChangePassword}}<div class="hint">После сброса можно оставить пустым.</div>{{end}}
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Новый пароль</label>
+        <input type="password" name="new_password" required>
+      </div>
+      <div class="field">
+        <label>Повторите новый пароль</label>
+        <input type="password" name="new_password2" required>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="submit" class="btn">Сменить пароль</button>
+    </div>
+  </form>
+</div>
+{{end}}
+
+{{define "field"}}
+<div class="field {{if .Err}}error{{end}}">
+  <label for="{{.Key}}">{{.Hint.Label}}</label>
+  <div class="hint">{{.Hint.Short}}{{if .Hint.HowTo}}<br>{{.Hint.HowTo}}{{end}}</div>
+  <input type="{{.Type}}" id="{{.Key}}" name="{{.Key}}" value="{{.Value}}"
+    {{if eq .Type "password"}}autocomplete="new-password"{{end}}>
+  {{if .Err}}<div class="field-error">{{.Err}}</div>{{end}}
+</div>
+{{end}}
+
+{{define "timezone-field"}}
+<div class="field {{if index .FieldErrors "general.timezone"}}error{{end}}">
+  <label for="general.timezone">Часовой пояс</label>
+  <div class="hint">Часовой пояс, по которому считается период проверки. По умолчанию (GMT+05:00) Алматы, Астана, Бишкек.</div>
+  <select id="general.timezone" name="general.timezone">
+    {{$current := .Cfg.General.Timezone}}
+    {{range .Timezones}}
+    <option value="{{.Value}}" {{if eq .Value $current}}selected{{end}}>{{.Label}}</option>
+    {{end}}
+  </select>
+  {{if index .FieldErrors "general.timezone"}}<div class="field-error">{{index .FieldErrors "general.timezone"}}</div>{{end}}
+</div>
+{{end}}
+{{template "base" .}}

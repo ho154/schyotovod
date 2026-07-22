@@ -1,0 +1,47 @@
+{{define "content"}}
+<div class="card">
+  <h1>Обновления</h1>
+
+  {{if .Flash}}<div class="alert {{.FlashType}}">{{.Flash}}</div>{{end}}
+  {{if .UpdateFailed}}
+  <div class="alert err">
+    Последнее обновление не удалось, работает предыдущая версия.
+    <details><summary>Показать подробности</summary><pre class="log">{{.UpdateError}}</pre></details>
+  </div>
+  {{end}}
+
+  <p>Текущая версия: <span class="badge ok">{{.CurrentVersion}}</span>
+    {{if .NewAvailable}}<span class="badge new">Доступна новая: {{.LatestVersion}}</span>{{end}}
+  </p>
+
+  {{if .Changelog}}
+  <h2>Что нового в {{.LatestVersion}}</h2>
+  <pre class="log">{{.Changelog}}</pre>
+  {{end}}
+
+  <form method="post" action="/settings-update" style="margin-top:16px">
+    <div class="checkbox">
+      <input type="checkbox" id="auto_update" name="auto_update" {{if .Cfg.Update.AutoUpdate}}checked{{end}}>
+      <label for="auto_update">Автоматически устанавливать обновления по расписанию</label>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="check_time">Время проверки обновлений</label>
+        <div class="hint">Время суток в часовом поясе сервиса ({{.Cfg.General.Timezone}}).</div>
+        <input type="time" id="check_time" name="check_time" value="{{.Cfg.Update.CheckTime}}">
+      </div>
+      <div class="field">
+        <label for="github_repo">Репозиторий обновлений</label>
+        <div class="hint">Формат: владелец/название репозитория на GitHub.</div>
+        <input type="text" id="github_repo" name="github_repo" value="{{.Cfg.Update.GitHubRepo}}">
+      </div>
+    </div>
+    <div class="actions">
+      <button type="submit" class="btn">Сохранить</button>
+      <a href="/check-updates" class="btn secondary">Проверить обновления сейчас</a>
+      {{if .NewAvailable}}<a href="/apply-update" class="btn">Обновить до {{.LatestVersion}}</a>{{end}}
+    </div>
+  </form>
+</div>
+{{end}}
+{{template "base" .}}

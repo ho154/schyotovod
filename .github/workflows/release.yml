@@ -1,0 +1,61 @@
+name: Сборка и публикация релиза
+
+# Публикует релиз при создании тега вида v1.2.3.
+# Собирает бинарники для Linux (amd64, arm64), Windows (amd64),
+# вычисляет для каждого SHA256 и прикладывает к GitHub Release.
+# Клиенты скачивают эти файлы анонимно (публичный репозиторий) —
+# и установщиком install.sh, и модулем самообновления.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Клонирование репозитория
+        uses: actions/checkout@v4
+
+      - name: Установка Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Определение версии
+        id: version
+        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Сборка бинарников
+        run: |
+          set -eu
+          VERSION="${{ steps.version.outputs.version }}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-s -w -X schyotovod/internal/version.Version=${VERSION} -X schyotovod/internal/version.Commit=${COMMIT} -X schyotovod/internal/version.BuildDate=${DATE}"
+
+          mkdir -p dist
+
+          build() {
+            local goos="$1" goarch="$2" ext="$3"
+            local name="schyotovod_${goos}_${goarch}${ext}"
+            echo "Сборка ${name}…"
+            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
+              go build -trimpath -ldflags "${LDFLAGS}" -o "dist/${name}" ./cmd/schyotovod
+            ( cd dist && sha256sum "${name}" > "${name}.sha256" )
+          }
+
+          build linux amd64 ""
+          build linux arm64 ""
+          build windows amd64 ".exe"
+
+      - name: Публикация релиза
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/schyotovod_*
+          generate_release_notes: true

@@ -1,0 +1,26 @@
+{{define "content"}}
+<div class="card">
+  <h1>Вход в панель управления</h1>
+  {{if .Error}}<div class="alert err">{{.Error}}</div>{{end}}
+  <form method="post" action="/login">
+    <div class="field">
+      <label for="login">Логин</label>
+      <input type="text" id="login" name="login" autofocus required>
+    </div>
+    <div class="field">
+      <label for="password">Пароль</label>
+      <input type="password" id="password" name="password" required>
+    </div>
+    <div class="actions">
+      <button type="submit" class="btn">Войти</button>
+    </div>
+  </form>
+  <details>
+    <summary>Забыли логин или пароль?</summary>
+    <p class="hint">Выполните на сервере команду:<br>
+      <code>sudo schyotovod --reset-admin-password</code><br>
+      Команда покажет в терминале логин и временный пароль для входа.</p>
+  </details>
+</div>
+{{end}}
+{{template "base" .}}

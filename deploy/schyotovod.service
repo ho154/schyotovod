@@ -1,0 +1,23 @@
+[Unit]
+Description=Schyotovod — автоматическая выгрузка счетов из Gmail в Pyrus
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=schyotovod
+Group=schyotovod
+WorkingDirectory=/opt/schyotovod
+ExecStart=/opt/schyotovod/bin/schyotovod --data-dir /opt/schyotovod
+Restart=on-failure
+RestartSec=5
+
+# Безопасность: ограничиваем права процесса.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/schyotovod
+
+[Install]
+WantedBy=multi-user.target

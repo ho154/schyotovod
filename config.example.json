@@ -1,0 +1,41 @@
+{
+  "gmail": {
+    "email": "",
+    "app_password": "",
+    "imap_host": "imap.gmail.com",
+    "imap_port": 993
+  },
+  "filter": {
+    "sender_email": "",
+    "start_day": 20,
+    "end_day": 29,
+    "fallback_poll_interval_minutes": 30
+  },
+  "pyrus": {
+    "login": "",
+    "security_key": "",
+    "auth_url": "https://accounts.pyrus.com/api/v4/auth",
+    "form_id": 0,
+    "task_id": 0,
+    "attachment_field_id": 0,
+    "client_name_field_id": 0,
+    "amount_field_id": 0,
+    "max_update_attempts": 3,
+    "retry_interval_minutes": 60
+  },
+  "general": {
+    "timezone": "Asia/Almaty",
+    "log_retention_days": 90
+  },
+  "web": {
+    "port": 47291,
+    "admin_login": "",
+    "admin_password_hash": "",
+    "must_change_password": false
+  },
+  "update": {
+    "auto_update": true,
+    "check_time": "03:00",
+    "github_repo": "your-org/schyotovod"
+  }
+}

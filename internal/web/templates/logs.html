@@ -1,0 +1,234 @@
+{{define "content"}}
+<div class="card">
+  <h1 style="margin-bottom:12px">Диагностика и действия</h1>
+  
+  <div class="checkbox" style="margin-bottom:8px">
+    <input type="checkbox" id="debug-logging-toggle" {{if .DebugLogging}}checked{{end}}>
+    <label for="debug-logging-toggle">Режим отладки (Debug)</label>
+  </div>
+  <div class="hint" style="margin-bottom:16px;font-size:12px;color:var(--gray)">Если включено — в логи попадают все действия бота, включая полные тела запросов и ответов внешних API (Gmail, Pyrus). Используйте только для диагностики проблем — такие логи могут содержать чувствительные данные и быстро растут в объёме. В обычном режиме пишутся только человекочитаемые события и ошибки.</div>
+
+  <div class="actions" style="margin-top:0;margin-bottom:16px;gap:8px;">
+    <button class="btn secondary action-btn" data-action="check-email-access">Проверить доступ к почте</button>
+    <button class="btn secondary action-btn" data-action="check-emails">Проверить письма на почте</button>
+    <button class="btn secondary action-btn" data-action="check-pyrus-access">Проверить доступ к Pyrus</button>
+    <button class="btn secondary action-btn" data-action="check-pyrus-fields">Проверить поля в форме Pyrus</button>
+    <button class="btn secondary action-btn" data-action="reset-attempts" style="border-color:var(--warn);color:var(--warn)">Сбросить таймер попыток Pyrus</button>
+  </div>
+  
+  <div id="action-alert" class="alert" style="display:none;margin-bottom:16px;"></div>
+
+  <details>
+    <summary style="font-weight:600;font-size:14px;color:var(--primary);cursor:pointer">Тестовая загрузка в Pyrus</summary>
+    <form id="test-upload-form" style="margin-top:12px;">
+      <div class="row">
+        <div class="field">
+          <label for="test-client" style="margin:4px 0">Клиент</label>
+          <input type="text" id="test-client" name="client" required>
+        </div>
+        <div class="field">
+          <label for="test-invoice-file" style="margin:4px 0">Файл счета</label>
+          <input type="file" id="test-invoice-file" name="invoice_file" required>
+        </div>
+        <div class="field">
+          <label for="test-amount" style="margin:4px 0">Сумма</label>
+          <input type="text" id="test-amount" name="amount" required>
+        </div>
+      </div>
+      <div class="actions" style="margin-top:12px">
+        <button type="submit" class="btn">Запустить тестовую загрузку</button>
+      </div>
+    </form>
+  </details>
+</div>
+
+<div class="card">
+  <h1>Логи</h1>
+  <form method="get" action="/logs" style="margin-bottom:16px">
+    <div class="row">
+      <div class="field">
+        <label for="date">Дата</label>
+        <select id="date" name="date" onchange="this.form.submit()">
+          {{range .Dates}}
+          <option value="{{.}}" {{if eq . $.SelectedDate}}selected{{end}}>{{.}}</option>
+          {{end}}
+        </select>
+      </div>
+      <div class="field">
+        <label for="level">Уровень</label>
+        <select id="level" name="level" onchange="this.form.submit()">
+          <option value="" {{if eq .SelectedLevel ""}}selected{{end}}>Все</option>
+          <option value="ИНФО" {{if eq .SelectedLevel "ИНФО"}}selected{{end}}>Только информация</option>
+          <option value="ПРЕДУПРЕЖДЕНИЕ" {{if eq .SelectedLevel "ПРЕДУПРЕЖДЕНИЕ"}}selected{{end}}>Только предупреждения</option>
+          <option value="ОШИБКА" {{if eq .SelectedLevel "ОШИБКА"}}selected{{end}}>Только ошибки</option>
+          <option value="ОТЛАДКА" {{if eq .SelectedLevel "ОТЛАДКА"}}selected{{end}}>Только отладка</option>
+        </select>
+      </div>
+      {{if .IsToday}}
+      <div class="field">
+        <label for="scope">Период логов</label>
+        <select id="scope" name="scope" onchange="this.form.submit()">
+          <option value="all" {{if eq .SelectedScope "all"}}selected{{end}}>Весь день</option>
+          <option value="session" {{if eq .SelectedScope "session"}}selected{{end}}>Текущая сессия</option>
+        </select>
+      </div>
+      {{end}}
+    </div>
+  </form>
+  {{if .Content}}
+  <pre class="log" id="log-content">{{.Content}}</pre>
+  {{else}}
+  <pre class="log" id="log-content" style="display:none"></pre>
+  <p class="muted" id="log-empty">Записей не найдено.</p>
+  {{end}}
+</div>
+
+<script>
+(function () {
+  // --- Диагностика ---
+  document.querySelectorAll('.action-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var action = btn.getAttribute('data-action');
+      runAction(action);
+    });
+  });
+
+  function runAction(action) {
+    var alertBox = document.getElementById('action-alert');
+    alertBox.style.display = 'none';
+    alertBox.className = 'alert';
+    
+    document.querySelectorAll('.action-btn, #test-upload-form button').forEach(function(b) {
+      b.disabled = true;
+    });
+
+    fetch('/logs/action/' + action, {
+      method: 'POST'
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      alertBox.textContent = data.message;
+      if (data.status === 'ok') {
+        alertBox.className = 'alert ok';
+      } else {
+        alertBox.className = 'alert err';
+      }
+      alertBox.style.display = '';
+    })
+    .catch(function(err) {
+      alertBox.textContent = 'Произошла непредвиденная ошибка: ' + err.message;
+      alertBox.className = 'alert err';
+      alertBox.style.display = '';
+    })
+    .finally(function() {
+      document.querySelectorAll('.action-btn, #test-upload-form button').forEach(function(b) {
+        b.disabled = false;
+      });
+    });
+  }
+
+  var testForm = document.getElementById('test-upload-form');
+  if (testForm) {
+    testForm.addEventListener('submit', function(e) {
+      e.preventDefault();
+      var alertBox = document.getElementById('action-alert');
+      alertBox.style.display = 'none';
+      alertBox.className = 'alert';
+
+      document.querySelectorAll('.action-btn, #test-upload-form button').forEach(function(b) {
+        b.disabled = true;
+      });
+
+      var formData = new FormData(testForm);
+      fetch('/logs/action/test-upload', {
+        method: 'POST',
+        body: formData
+      })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        alertBox.textContent = data.message;
+        if (data.status === 'ok') {
+          alertBox.className = 'alert ok';
+        } else {
+          alertBox.className = 'alert err';
+        }
+        alertBox.style.display = '';
+      })
+      .catch(function(err) {
+        alertBox.textContent = 'Произошла непредвиденная ошибка: ' + err.message;
+        alertBox.className = 'alert err';
+        alertBox.style.display = '';
+      })
+      .finally(function() {
+        document.querySelectorAll('.action-btn, #test-upload-form button').forEach(function(b) {
+          b.disabled = false;
+        });
+      });
+    });
+  }
+
+  // --- Переключатель режима отладки (Debug) ---
+  var debugToggle = document.getElementById('debug-logging-toggle');
+  if (debugToggle) {
+    debugToggle.addEventListener('change', function () {
+      var enabled = debugToggle.checked;
+      fetch('/logs/action/toggle-debug?enabled=' + enabled, { method: 'POST' })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if (data.status !== 'ok') {
+            alert('Не удалось изменить режим отладки: ' + data.message);
+            debugToggle.checked = !enabled;
+          }
+        })
+        .catch(function(err) {
+          alert('Ошибка при изменении режима отладки: ' + err.message);
+          debugToggle.checked = !enabled;
+        });
+    });
+  }
+})();
+</script>
+
+{{if .IsToday}}
+<script>
+(function () {
+  var level = "{{.SelectedLevel}}";
+  var pre = document.getElementById('log-content');
+  var emptyMsg = document.getElementById('log-empty');
+  var source = null;
+
+  function appendLine(line) {
+    if (pre.style.display === 'none') {
+      pre.style.display = '';
+      if (emptyMsg) emptyMsg.style.display = 'none';
+    }
+    var nearBottom = (pre.scrollTop + pre.clientHeight) >= (pre.scrollHeight - 40);
+    pre.textContent += (pre.textContent.endsWith('\n') || pre.textContent === '' ? '' : '\n') + line;
+    if (nearBottom) {
+      pre.scrollTop = pre.scrollHeight;
+    }
+  }
+
+  function connect() {
+    var url = '/logs/stream' + (level ? ('?level=' + encodeURIComponent(level)) : '');
+    source = new EventSource(url);
+    source.onmessage = function (ev) {
+      appendLine(ev.data.replace(/\\n/g, '\n'));
+    };
+  }
+
+  function disconnect() {
+    if (source) {
+      source.close();
+      source = null;
+    }
+  }
+
+  connect();
+
+  window.addEventListener('beforeunload', disconnect);
+})();
+</script>
+{{end}}
+{{end}}
+{{template "base" .}}

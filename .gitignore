@@ -1,0 +1,33 @@
+# Скомпилированные бинарники
+/bin/
+*.exe
+*.exe~
+/schyotovod
+/schyotovod.old
+
+# Локальные данные среды выполнения (НЕ коммитить — содержат секреты)
+config.json
+dedup.json
+/logs/
+/data/
+
+# Go
+vendor/
+*.test
+*.out
+
+# IDE / ОС
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# Тестовая папка и граф связей
+/testdata/
+/graphify-out/
+
+# Исключения для локальных/тестовых путей
+/docs/
+/scripts/
+/.playwright-mcp/
